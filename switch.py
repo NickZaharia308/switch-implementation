@@ -44,35 +44,31 @@ def check_if_unicast(dest_mac):
 # Read info from the config file
 def read_config_file(file_path):
     switch_priority = -1
-    access_ports = []
-    trunk_ports = []
+    access_ports = {}
+    trunk_ports = {}
 
     with open(file_path, 'r') as file:
         for line in file:
             line = line.strip()
             if switch_priority == -1:
-                switch_priority = int(line.split()[1])
+                switch_priority = int(line.split()[0])
 
             elif line.startswith("r-"):
                 parts = line.split()
 
                 interface = parts[0]
                 vlan_id = int(parts[1])
-                access_ports.append((interface, vlan_id))
+                access_ports[interface] = vlan_id
 
             elif line.startswith("rr-"):
                 parts = line.split()
 
                 interface = parts[0]
                 trunk = parts[1]
-                trunk_ports.append((interface, trunk))
+                trunk_ports[interface] = trunk
     
     return switch_priority, access_ports, trunk_ports
 
-def get_802_1Q_tag(vlan_id):
-    tpid = 0x8200
-    tci = (0 << 13) | (0 << 12) | vlan_id
-    return struct.pack('!HH', tpid, tci)
 
 
 def main():
@@ -96,8 +92,8 @@ def main():
 
     # Deined variables
     MAC_Table = {}
-    file_name = "switch_" + switch_id + ".cfg"
-    file_path = "./config/" + file_name
+    file_name = "switch" + switch_id + ".cfg"
+    file_path = "./configs/" + file_name
 
     # Read the config file
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
@@ -127,9 +123,33 @@ def main():
 
         # TODO: Implement forwarding with learning
         MAC_Table[src_mac] = interface
+        
 
         if check_if_unicast(dest_mac_numerical):
             if dest_mac in MAC_Table:
+                # Check if packet should have 802.1Q header (it is sent to a trunk port)
+                if MAC_Table[dest_mac] in trunk_ports:
+                    
+                    # Check if the packet arrived from an access port (should add 802.1Q header)
+                    if interface in access_ports:
+                        vlan_id = access_ports[interface]
+                        data = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
+                        length += 4
+                    # Else the header is already there, just forward the packet
+                else:
+                    # If the packet is sent to an access port, and the sender is an access port
+                    # check if they are in the same VLAN
+                    if vlan_id == -1 and interface in access_ports:
+                        if access_ports[interface] != access_ports[MAC_Table[dest_mac]]:
+                            continue
+                    # If the packet is sent to an access port, and
+                    # the sender is a trunk port, remove the 802.1Q header
+                    if vlan_id != -1 and vlan_id == access_ports[MAC_Table[dest_mac]]:
+                        data = data[0:12] + data[16:]
+                        length -= 4
+                    elif vlan_id != -1 and vlan_id != access_ports[MAC_Table[dest_mac]]:
+                        continue
+                    
                 send_to_link(MAC_Table[dest_mac], length, data)
             else:
                 for curr_interface in interfaces:
