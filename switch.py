@@ -8,6 +8,8 @@ from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interf
 
 # Broadcast MAC address
 BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
+file_path = ""
+
 
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
@@ -69,6 +71,18 @@ def read_config_file(file_path):
     
     return switch_priority, access_ports, trunk_ports
 
+def get_interface_value(interface_name):
+    global file_path
+    # Start with counter from -1 because first line is the switch priority
+    counter = -1
+    with open(file_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            parts = line.split()
+            if(parts[0] == interface_name):
+                return counter
+            counter += 1
+    return -1
 
 
 def main():
@@ -86,17 +100,24 @@ def main():
     t = threading.Thread(target=send_bdpu_every_sec)
     t.start()
 
+    # Deined variables
+    MAC_Table = {}
+    file_name = "switch" + switch_id + ".cfg"
+    global file_path
+    file_path = "./configs/" + file_name
+
     # Printing interface names
     for i in interfaces:
         print(get_interface_name(i))
 
-    # Deined variables
-    MAC_Table = {}
-    file_name = "switch" + switch_id + ".cfg"
-    file_path = "./configs/" + file_name
-
+    
     # Read the config file
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
+
+    # print all access ports
+    print("Access ports:")
+    for key, value in access_ports.items():
+        print(key, value)
 
     while True:
         # Note that data is of type bytes([...]).
@@ -119,47 +140,108 @@ def main():
         print(f'Source MAC: {src_mac}')
         print(f'EtherType: {ethertype}')
 
-        print("Received frame of size {} on interface {}".format(length, interface), flush=True)
+        print("Received frame of size {} on interface {}".format(length, get_interface_name(interface)), flush=True)
 
         # TODO: Implement forwarding with learning
-        MAC_Table[src_mac] = interface
-        
+        MAC_Table[src_mac] = get_interface_name(interface)
 
+        # Forward process
         if check_if_unicast(dest_mac_numerical):
             if dest_mac in MAC_Table:
                 # Check if packet should have 802.1Q header (it is sent to a trunk port)
                 if MAC_Table[dest_mac] in trunk_ports:
                     
                     # Check if the packet arrived from an access port (should add 802.1Q header)
-                    if interface in access_ports:
-                        vlan_id = access_ports[interface]
-                        data = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
-                        length += 4
+                    if get_interface_name(interface) in access_ports:
+                        vlan_id = access_ports[get_interface_name(interface)]
+                        data_temp = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
+                        length_temp = length + 4
+                        send_to_link(get_interface_value(MAC_Table[dest_mac]), length_temp, data_temp)
                     # Else the header is already there, just forward the packet
+                    else:
+                        send_to_link(get_interface_value(MAC_Table[dest_mac]), length, data)
                 else:
                     # If the packet is sent to an access port, and the sender is an access port
                     # check if they are in the same VLAN
-                    if vlan_id == -1 and interface in access_ports:
-                        if access_ports[interface] != access_ports[MAC_Table[dest_mac]]:
+                    if get_interface_name(interface) in access_ports:
+                        if access_ports[get_interface_name(interface)] != access_ports[MAC_Table[dest_mac]]:
                             continue
                     # If the packet is sent to an access port, and
                     # the sender is a trunk port, remove the 802.1Q header
-                    if vlan_id != -1 and vlan_id == access_ports[MAC_Table[dest_mac]]:
-                        data = data[0:12] + data[16:]
-                        length -= 4
-                    elif vlan_id != -1 and vlan_id != access_ports[MAC_Table[dest_mac]]:
+                    if get_interface_name(interface) in trunk_ports and vlan_id == access_ports[MAC_Table[dest_mac]]:
+                        data_temp = data[0:12] + data[16:]
+                        length_temp = length - 4
+                        send_to_link(get_interface_value(MAC_Table[dest_mac]), length_temp, data_temp)
+                    elif get_interface_name(interface) in trunk_ports and vlan_id != access_ports[MAC_Table[dest_mac]]:
                         continue
-                    
-                send_to_link(MAC_Table[dest_mac], length, data)
+                    else:
+                        send_to_link(get_interface_value(MAC_Table[dest_mac]), length, data)
             else:
                 for curr_interface in interfaces:
                     if curr_interface != interface:
-                        send_to_link(curr_interface, length, data)
+                        curr_interface_name = get_interface_name(curr_interface)
+                        # Check if packet should have 802.1Q header (it is sent to a trunk port)
+                        if curr_interface_name in trunk_ports:
+                            
+                            # Check if the packet arrived from an access port (should add 802.1Q header)
+                            if get_interface_name(interface) in access_ports:
+                                vlan_id = access_ports[get_interface_name(interface)]
+                                data_temp = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
+                                length_temp = length + 4
+                                send_to_link(curr_interface, length_temp, data_temp)
+                            # Else the header is already there, just forward the packet
+                            else:
+                                send_to_link(curr_interface, length, data)
+                        else:
+                            # If the packet is sent to an access port, and the sender is an access port
+                            # check if they are in the same VLAN
+                            if get_interface_name(interface) in access_ports:
+                                if access_ports[get_interface_name(interface)] != access_ports[curr_interface_name]:
+                                    continue
+                            # If the packet is sent to an access port, and
+                            # the sender is a trunk port, remove the 802.1Q header
+                            if get_interface_name(interface) in trunk_ports and vlan_id == access_ports[curr_interface_name]:
+                                data_temp = data[0:12] + data[16:]
+                                length_temp = length - 4
+                                send_to_link(curr_interface, length_temp, data_temp)
+                            elif get_interface_name(interface) in trunk_ports and vlan_id != access_ports[curr_interface_name]:
+                                continue
+                            else:
+                                send_to_link(curr_interface, length, data)
         else:
             for curr_interface in interfaces:
                 if curr_interface != interface:
-                    send_to_link(curr_interface, length, data)
-
+                    curr_interface_name = get_interface_name(curr_interface)
+                    # Check if packet should have 802.1Q header (it is sent to a trunk port)
+                    if curr_interface_name in trunk_ports:
+                        
+                        # Check if the packet arrived from an access port (should add 802.1Q header)
+                        if get_interface_name(interface) in access_ports:
+                            vlan_id = access_ports[get_interface_name(interface)]
+                            data_temp = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
+                            length_temp = length + 4
+                            send_to_link(curr_interface, length_temp, data_temp)
+                        # Else the header is already there, just forward the packet
+                        else:
+                            send_to_link(curr_interface, length, data)
+                    else:
+                        # If the packet is sent to an access port, and the sender is an access port
+                        # check if they are in the same VLAN
+                        if get_interface_name(interface) in access_ports:
+                            if access_ports[get_interface_name(interface)] != access_ports[curr_interface_name]:
+                                continue
+                        # If the packet is sent to an access port, and
+                        # the sender is a trunk port, remove the 802.1Q header
+                        if get_interface_name(interface) in trunk_ports and vlan_id == access_ports[curr_interface_name]:
+                            data_temp = data[0:12] + data[16:]
+                            length_temp = length - 4
+                            send_to_link(curr_interface, length_temp, data_temp)
+                        elif get_interface_name(interface) in trunk_ports and vlan_id != access_ports[curr_interface_name]:
+                            continue
+                        else:
+                            send_to_link(curr_interface, length, data)
+                        
+        print()
         # TODO: Implement VLAN support
         # TODO: Implement STP support
 
