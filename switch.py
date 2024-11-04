@@ -10,7 +10,6 @@ from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interf
 BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
 file_path = ""
 own_bridge_id, root_bridge_id, root_path_cost = -1, -1, -1
-switch_priority, access_ports, trunk_ports = -1, {}, {}
 
 
 def parse_ethernet_header(data):
@@ -35,7 +34,22 @@ def create_vlan_tag(vlan_id):
     # 0x8100 for the Ethertype for 802.1Q
     # vlan_id & 0x0FFF ensures that only the last 12 bits are used
     return struct.pack('!H', 0x8200) + struct.pack('!H', vlan_id & 0x0FFF)
-        
+
+def send_bdpu_every_sec():
+    while True:
+        # TODO Send BDPU every second if necessary
+        if own_bridge_id == root_bridge_id:
+            for interface in trunk_ports.keys():
+                send_bdpu(interface)
+        time.sleep(1)
+
+def send_bdpu(interface):
+    global own_bridge_id, root_bridge_id, root_path_cost
+    source_MAC = get_switch_mac()
+    dest_MAC = b'\x01\x80\xc2\x00\x00\x00'
+    data = dest_MAC + source_MAC + root_bridge_id.to_bytes(4, byteorder='big') + own_bridge_id.to_bytes(4, byteorder='big') + root_path_cost.to_bytes(4, byteorder='big')
+    length = len(data)
+    send_to_link(get_interface_value(interface), length, data)
 
 # Checks if the address is unicast
 def check_if_unicast(dest_mac):
@@ -43,7 +57,10 @@ def check_if_unicast(dest_mac):
 
 # Read info from the config file
 def read_config_file(file_path):
-    global switch_priority, access_ports, trunk_ports
+    switch_priority = -1
+    access_ports = {}
+    trunk_ports = {}
+
     with open(file_path, 'r') as file:
         for line in file:
             line = line.strip()
@@ -80,6 +97,7 @@ def get_interface_value(interface_name):
     return -1
 
 def init_stp(trunk_ports, priority, access_ports):
+    global own_bridge_id, root_bridge_id, root_path_cost
     # Set trunk_ports as blocked
     for interface in trunk_ports.keys():
         trunk_ports[interface] = "B"
@@ -93,27 +111,6 @@ def init_stp(trunk_ports, priority, access_ports):
     if own_bridge_id == root_bridge_id:
         for interface in trunk_ports.keys():
             trunk_ports[interface] = "D"
-        for interface in access_ports.keys():
-            access_ports[interface] = "D"
-
-    return own_bridge_id, root_bridge_id, root_path_cost
-
-def send_bdpu(interface):
-    global own_bridge_id, root_bridge_id, root_path_cost
-    sender_MAC = get_switch_mac()
-    destination_MAC = b'\x01\x80\xc2\x00\x00\x00'
-    data = sender_MAC + destination_MAC + struct.pack('!I', own_bridge_id) + struct.pack('!I', root_path_cost) + struct.pack('!I', root_bridge_id)
-    length = len(data)
-    send_to_link(interface, length, data)    
-    
-def send_bdpu_every_sec():
-    global own_bridge_id, root_bridge_id, root_path_cost, trunk_ports
-    while True:
-        # TODO Send BDPU every second if necessary
-        # If the switch is the root bridge, send BPDU to all interfaces
-        if own_bridge_id == root_bridge_id:
-            for interface in trunk_ports.keys():
-                send_bdpu(get_interface_value(interface))
 
 
 def main():
@@ -130,24 +127,18 @@ def main():
     global file_path
     file_path = "./configs/" + file_name
 
-    # Printing interface names
-    for i in interfaces:
-        print(get_interface_name(i))
-
     
     # Read the config file
-    global switch_priority, access_ports, trunk_ports
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
-
-    global own_bridge_id, root_bridge_id, root_path_cost
-    own_bridge_id, root_bridge_id, root_path_cost = init_stp(trunk_ports, switch_priority, access_ports)
+    
+    init_stp(trunk_ports, switch_priority, access_ports)
 
     print("# Starting switch with id {}".format(switch_id), flush=True)
     print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
 
     # Create and start a new thread that deals with sending BDPU
-    t = threading.Thread(target=send_bdpu_every_sec)
-    t.start()
+    #t = threading.Thread(target=send_bdpu_every_sec)
+    #t.start()
 
     # print all access ports
     print("Access ports:")
