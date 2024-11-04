@@ -9,6 +9,8 @@ from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interf
 # Broadcast MAC address
 BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
 file_path = ""
+own_bridge_id, root_bridge_id, root_path_cost = -1, -1, -1
+switch_priority, access_ports, trunk_ports = -1, {}, {}
 
 
 def parse_ethernet_header(data):
@@ -33,11 +35,7 @@ def create_vlan_tag(vlan_id):
     # 0x8100 for the Ethertype for 802.1Q
     # vlan_id & 0x0FFF ensures that only the last 12 bits are used
     return struct.pack('!H', 0x8200) + struct.pack('!H', vlan_id & 0x0FFF)
-
-def send_bdpu_every_sec():
-    while True:
-        # TODO Send BDPU every second if necessary
-        time.sleep(1)
+        
 
 # Checks if the address is unicast
 def check_if_unicast(dest_mac):
@@ -45,10 +43,7 @@ def check_if_unicast(dest_mac):
 
 # Read info from the config file
 def read_config_file(file_path):
-    switch_priority = -1
-    access_ports = {}
-    trunk_ports = {}
-
+    global switch_priority, access_ports, trunk_ports
     with open(file_path, 'r') as file:
         for line in file:
             line = line.strip()
@@ -84,6 +79,42 @@ def get_interface_value(interface_name):
             counter += 1
     return -1
 
+def init_stp(trunk_ports, priority, access_ports):
+    # Set trunk_ports as blocked
+    for interface in trunk_ports.keys():
+        trunk_ports[interface] = "B"
+
+    # Set the switch as root bridge
+    own_bridge_id = priority
+    root_bridge_id = priority
+    root_path_cost = 0
+
+    # If the switch is the root bridge, set all the ports as designated
+    if own_bridge_id == root_bridge_id:
+        for interface in trunk_ports.keys():
+            trunk_ports[interface] = "D"
+        for interface in access_ports.keys():
+            access_ports[interface] = "D"
+
+    return own_bridge_id, root_bridge_id, root_path_cost
+
+def send_bdpu(interface):
+    global own_bridge_id, root_bridge_id, root_path_cost
+    sender_MAC = get_switch_mac()
+    destination_MAC = b'\x01\x80\xc2\x00\x00\x00'
+    data = sender_MAC + destination_MAC + struct.pack('!I', own_bridge_id) + struct.pack('!I', root_path_cost) + struct.pack('!I', root_bridge_id)
+    length = len(data)
+    send_to_link(interface, length, data)    
+    
+def send_bdpu_every_sec():
+    global own_bridge_id, root_bridge_id, root_path_cost, trunk_ports
+    while True:
+        # TODO Send BDPU every second if necessary
+        # If the switch is the root bridge, send BPDU to all interfaces
+        if own_bridge_id == root_bridge_id:
+            for interface in trunk_ports.keys():
+                send_bdpu(get_interface_value(interface))
+
 
 def main():
     # init returns the max interface number. Our interfaces
@@ -92,13 +123,6 @@ def main():
 
     num_interfaces = wrapper.init(sys.argv[2:])
     interfaces = range(0, num_interfaces)
-
-    print("# Starting switch with id {}".format(switch_id), flush=True)
-    print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
-
-    # Create and start a new thread that deals with sending BDPU
-    t = threading.Thread(target=send_bdpu_every_sec)
-    t.start()
 
     # Deined variables
     MAC_Table = {}
@@ -112,7 +136,18 @@ def main():
 
     
     # Read the config file
+    global switch_priority, access_ports, trunk_ports
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
+
+    global own_bridge_id, root_bridge_id, root_path_cost
+    own_bridge_id, root_bridge_id, root_path_cost = init_stp(trunk_ports, switch_priority, access_ports)
+
+    print("# Starting switch with id {}".format(switch_id), flush=True)
+    print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
+
+    # Create and start a new thread that deals with sending BDPU
+    t = threading.Thread(target=send_bdpu_every_sec)
+    t.start()
 
     # print all access ports
     print("Access ports:")
