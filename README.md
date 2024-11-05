@@ -1,4 +1,3 @@
-1 2 3
 # Tema 1 - Implementare Switch
 
 ## Copyright 2024 Zaharia Nicusor-Alexandru 335CA
