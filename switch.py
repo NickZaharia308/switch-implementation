@@ -10,6 +10,7 @@ from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interf
 BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
 file_path = ""
 own_bridge_id, root_bridge_id, root_path_cost = -1, -1, -1
+root_port = -1
 
 
 def parse_ethernet_header(data):
@@ -35,7 +36,8 @@ def create_vlan_tag(vlan_id):
     # vlan_id & 0x0FFF ensures that only the last 12 bits are used
     return struct.pack('!H', 0x8200) + struct.pack('!H', vlan_id & 0x0FFF)
 
-def send_bdpu_every_sec():
+def send_bdpu_every_sec(trunk_ports):
+    global own_bridge_id, root_bridge_id, root_path_cost
     while True:
         # TODO Send BDPU every second if necessary
         if own_bridge_id == root_bridge_id:
@@ -131,14 +133,16 @@ def main():
     # Read the config file
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
     
+    global own_bridge_id, root_bridge_id, root_path_cost, root_port
+    am_i_root = True
     init_stp(trunk_ports, switch_priority, access_ports)
 
     print("# Starting switch with id {}".format(switch_id), flush=True)
     print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
 
     # Create and start a new thread that deals with sending BDPU
-    #t = threading.Thread(target=send_bdpu_every_sec)
-    #t.start()
+    t = threading.Thread(target=send_bdpu_every_sec, args=(trunk_ports,))
+    t.start()
 
     # print all access ports
     print("Access ports:")
@@ -170,6 +174,56 @@ def main():
 
         # TODO: Implement forwarding with learning
         MAC_Table[src_mac] = get_interface_name(interface)
+
+        # Check if the packet is a BPDU
+        if dest_mac_numerical == 0x0180c2000000:
+            root_bridge_id_packet = int.from_bytes(data[12:16], byteorder='big')
+            own_bridge_id_packet = int.from_bytes(data[16:20], byteorder='big')
+            root_path_cost_packet = int.from_bytes(data[20:24], byteorder='big')
+
+            print("Root bridge id: ", root_bridge_id_packet)
+            if root_bridge_id_packet < root_bridge_id:
+                root_bridge_id = root_bridge_id_packet
+                root_path_cost = root_path_cost_packet + 10
+                root_port = get_interface_name(interface)
+
+                if am_i_root:
+                    am_i_root = False
+                    for current_interface in trunk_ports.keys():
+                        print("Current interface: ", current_interface)
+                        print("Root port: ", root_port)
+                        if root_port != current_interface:
+                            trunk_ports[current_interface] = "B"
+                
+                if trunk_ports[root_port] == "B":
+                    trunk_ports[root_port] = "D"
+            
+                for current_interface in trunk_ports.keys():
+                    if root_port != current_interface:
+                        source_MAC = get_switch_mac()
+                        dest_MAC = b'\x01\x80\xc2\x00\x00\x00'
+                        data_temp = dest_MAC + source_MAC + root_bridge_id.to_bytes(4, byteorder='big') + own_bridge_id.to_bytes(4, byteorder='big') + root_path_cost.to_bytes(4, byteorder='big')
+                        length_temp = len(data_temp)
+                        send_to_link(get_interface_value(interface), length_temp, data_temp)
+
+            elif root_bridge_id_packet == root_bridge_id:
+                if root_port == -1:
+                    continue
+                elif root_port == get_interface_name(interface) and root_path_cost_packet + 10 < root_path_cost:
+                    root_path_cost = root_path_cost_packet + 10
+                elif root_port != get_interface_name(interface):
+                    if root_path_cost_packet > root_path_cost:
+                        trunk_ports[get_interface_name(interface)] = "D"
+
+            elif own_bridge_id_packet == own_bridge_id:
+                trunk_ports[get_interface_name(interface)] = "B"
+            else:
+                continue
+            
+            if own_bridge_id == root_bridge_id:
+                for current_interface in trunk_ports.keys():
+                    trunk_ports[current_interface] = "D"
+            continue
 
         # Forward process
         if check_if_unicast(dest_mac_numerical):
