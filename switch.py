@@ -6,8 +6,7 @@ import threading
 import time
 from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interface_name
 
-# Broadcast MAC address
-BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
+# Defined global variabiles
 file_path = ""
 own_bridge_id, root_bridge_id, root_path_cost = -1, -1, -1
 root_port = -1
@@ -40,12 +39,13 @@ def create_vlan_tag(vlan_id):
 def send_bdpu_every_sec(trunk_ports):
     global own_bridge_id, root_bridge_id, root_path_cost
     while True:
-        # TODO Send BDPU every second if necessary
+        # Send BDPU every second if necessary
         if own_bridge_id == root_bridge_id:
             for interface in trunk_ports.keys():
                 send_bdpu(interface)
         time.sleep(1)
 
+# Creates a BPDU packet and sends it on the interface
 def send_bdpu(interface):
     global own_bridge_id, root_bridge_id, root_path_cost
     source_MAC = get_switch_mac()
@@ -58,7 +58,7 @@ def send_bdpu(interface):
 def check_if_unicast(dest_mac):
     return dest_mac & 0x010000000000 == 0
 
-# Read info from the config file
+# Reads info from the config file
 def read_config_file(file_path):
     switch_priority = -1
     access_ports = {}
@@ -67,9 +67,12 @@ def read_config_file(file_path):
     with open(file_path, 'r') as file:
         for line in file:
             line = line.strip()
+
+            # Switch priority is the first line in the file
             if switch_priority == -1:
                 switch_priority = int(line.split()[0])
 
+            # Access ports are marked with "r-" in the config file
             elif line.startswith("r-"):
                 parts = line.split()
 
@@ -77,6 +80,7 @@ def read_config_file(file_path):
                 vlan_id = int(parts[1])
                 access_ports[interface] = vlan_id
 
+            # Trunk ports are marked with "rr-" in the config file
             elif line.startswith("rr-"):
                 parts = line.split()
 
@@ -86,15 +90,18 @@ def read_config_file(file_path):
     
     return switch_priority, access_ports, trunk_ports
 
+# Returns the interface number from the interface name
 def get_interface_value(interface_name):
     global name_to_interface
-    # Start with counter from -1 because first line is the switch priority
+
     if interface_name in name_to_interface:
         return name_to_interface[interface_name]
     return -1
 
+# Initializes the switch for STP
 def init_stp(trunk_ports, priority, access_ports):
     global own_bridge_id, root_bridge_id, root_path_cost
+
     # Set trunk_ports as blocked
     for interface in trunk_ports.keys():
         trunk_ports[interface] = "B"
@@ -124,6 +131,7 @@ def main():
     global file_path
     file_path = "./configs/" + file_name
 
+    # Create the name to interface mapping
     global name_to_interface
     for interface in interfaces:
         name_to_interface[get_interface_name(interface)] = interface
@@ -131,21 +139,14 @@ def main():
     # Read the config file
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
     
+    # Initialize the switch for STP
     global own_bridge_id, root_bridge_id, root_path_cost, root_port
     am_i_root = True
     init_stp(trunk_ports, switch_priority, access_ports)
 
-    print("# Starting switch with id {}".format(switch_id), flush=True)
-    print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
-
     # Create and start a new thread that deals with sending BDPU
     t = threading.Thread(target=send_bdpu_every_sec, args=(trunk_ports,))
     t.start()
-
-    # print all access ports
-    print("Ports:")
-    for interface in interfaces:
-        print(f"Interface: {interface} and name: {get_interface_name(interface)}")
     
 
     while True:
@@ -158,35 +159,21 @@ def main():
         dest_mac, src_mac, ethertype, vlan_id = parse_ethernet_header(data)
         dest_mac_numerical = int.from_bytes(dest_mac, byteorder='big')
 
-        # Print the MAC src and MAC dst in human readable format
+        # Get the MAC src and MAC dst in human readable format
         dest_mac = ':'.join(f'{b:02x}' for b in dest_mac)
         src_mac = ':'.join(f'{b:02x}' for b in src_mac)
 
-        # Note. Adding a VLAN tag can be as easy as
-        # tagged_frame = data[0:12] + create_vlan_tag(10) + data[12:]
-
-        print(f'Destination MAC: {dest_mac}')
-        print(f'Source MAC: {src_mac}')
-        print(f'EtherType: {ethertype}')
-
-        print("Received frame of size {} on interface {}".format(length, get_interface_name(interface)), flush=True)
-
-        # TODO: Implement forwarding with learning
+        # Implement forwarding with learning
         MAC_Table[src_mac] = get_interface_name(interface)
 
         # Check if the packet is a BPDU
         if dest_mac_numerical == 0x0180c2000000:
+            # Extract the fields from the BPDU
             root_bridge_id_packet = int.from_bytes(data[12:16], byteorder='big')
             own_bridge_id_packet = int.from_bytes(data[16:20], byteorder='big')
             root_path_cost_packet = int.from_bytes(data[20:24], byteorder='big')
 
-            print("Source MAC: ", src_mac)
-            print("Destination MAC: ", dest_mac)
-            print("Root bridge id packet: ", root_bridge_id_packet)
-            print("Own bridge id packet: ", own_bridge_id_packet)
-            print("Root path cost packet: ", root_path_cost_packet)
-
-            print("Root bridge id: ", root_bridge_id_packet)
+            # Check if the priority is better (lower) than the current one
             if root_bridge_id_packet < root_bridge_id:
                 root_bridge_id = root_bridge_id_packet
                 root_path_cost = root_path_cost_packet + 10
@@ -198,9 +185,11 @@ def main():
                         if root_port != current_interface:
                             trunk_ports[current_interface] = "B"
                 
+                # Set the root port as designated
                 if trunk_ports[root_port] == "B":
                     trunk_ports[root_port] = "D"
             
+                # Send BPDU on all trunk ports
                 for current_interface in trunk_ports.keys():
                     source_MAC = get_switch_mac()
                     dest_MAC = b'\x01\x80\xc2\x00\x00\x00'
@@ -238,7 +227,6 @@ def main():
                         vlan_id = access_ports[get_interface_name(interface)]
                         data_temp = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
                         length_temp = length + 4
-                        print(get_interface_value(MAC_Table[dest_mac]))
                         send_to_link(get_interface_value(MAC_Table[dest_mac]), length_temp, data_temp)
                     # Else the header is already there, just forward the packet
                     else:
@@ -323,13 +311,7 @@ def main():
                             continue
                         else:
                             send_to_link(curr_interface, length, data)
-                        
-        print()
-        # TODO: Implement VLAN support
-        # TODO: Implement STP support
 
-        # data is of type bytes.
-        # send_to_link(i, length, data)
 
 if __name__ == "__main__":
     main()
