@@ -11,6 +11,7 @@ BROADCAST_MAC = b'\xff\xff\xff\xff\xff\xff'
 file_path = ""
 own_bridge_id, root_bridge_id, root_path_cost = -1, -1, -1
 root_port = -1
+name_to_interface = {}
 
 
 def parse_ethernet_header(data):
@@ -86,16 +87,10 @@ def read_config_file(file_path):
     return switch_priority, access_ports, trunk_ports
 
 def get_interface_value(interface_name):
-    global file_path
+    global name_to_interface
     # Start with counter from -1 because first line is the switch priority
-    counter = -1
-    with open(file_path, 'r') as file:
-        for line in file:
-            line = line.strip()
-            parts = line.split()
-            if(parts[0] == interface_name):
-                return counter
-            counter += 1
+    if interface_name in name_to_interface:
+        return name_to_interface[interface_name]
     return -1
 
 def init_stp(trunk_ports, priority, access_ports):
@@ -129,7 +124,10 @@ def main():
     global file_path
     file_path = "./configs/" + file_name
 
-    
+    global name_to_interface
+    for interface in interfaces:
+        name_to_interface[get_interface_name(interface)] = interface
+
     # Read the config file
     switch_priority, access_ports, trunk_ports = read_config_file(file_path)
     
@@ -145,9 +143,10 @@ def main():
     t.start()
 
     # print all access ports
-    print("Access ports:")
-    for key, value in access_ports.items():
-        print(key, value)
+    print("Ports:")
+    for interface in interfaces:
+        print(f"Interface: {interface} and name: {get_interface_name(interface)}")
+    
 
     while True:
         # Note that data is of type bytes([...]).
@@ -239,6 +238,7 @@ def main():
                         vlan_id = access_ports[get_interface_name(interface)]
                         data_temp = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
                         length_temp = length + 4
+                        print(get_interface_value(MAC_Table[dest_mac]))
                         send_to_link(get_interface_value(MAC_Table[dest_mac]), length_temp, data_temp)
                     # Else the header is already there, just forward the packet
                     else:
