@@ -181,6 +181,12 @@ def main():
             own_bridge_id_packet = int.from_bytes(data[16:20], byteorder='big')
             root_path_cost_packet = int.from_bytes(data[20:24], byteorder='big')
 
+            print("Source MAC: ", src_mac)
+            print("Destination MAC: ", dest_mac)
+            print("Root bridge id packet: ", root_bridge_id_packet)
+            print("Own bridge id packet: ", own_bridge_id_packet)
+            print("Root path cost packet: ", root_path_cost_packet)
+
             print("Root bridge id: ", root_bridge_id_packet)
             if root_bridge_id_packet < root_bridge_id:
                 root_bridge_id = root_bridge_id_packet
@@ -190,8 +196,6 @@ def main():
                 if am_i_root:
                     am_i_root = False
                     for current_interface in trunk_ports.keys():
-                        print("Current interface: ", current_interface)
-                        print("Root port: ", root_port)
                         if root_port != current_interface:
                             trunk_ports[current_interface] = "B"
                 
@@ -199,12 +203,11 @@ def main():
                     trunk_ports[root_port] = "D"
             
                 for current_interface in trunk_ports.keys():
-                    if root_port != current_interface:
-                        source_MAC = get_switch_mac()
-                        dest_MAC = b'\x01\x80\xc2\x00\x00\x00'
-                        data_temp = dest_MAC + source_MAC + root_bridge_id.to_bytes(4, byteorder='big') + own_bridge_id.to_bytes(4, byteorder='big') + root_path_cost.to_bytes(4, byteorder='big')
-                        length_temp = len(data_temp)
-                        send_to_link(get_interface_value(interface), length_temp, data_temp)
+                    source_MAC = get_switch_mac()
+                    dest_MAC = b'\x01\x80\xc2\x00\x00\x00'
+                    data_temp = dest_MAC + source_MAC + root_bridge_id.to_bytes(4, byteorder='big') + own_bridge_id.to_bytes(4, byteorder='big') + root_path_cost.to_bytes(4, byteorder='big')
+                    length_temp = len(data_temp)
+                    send_to_link(get_interface_value(current_interface), length_temp, data_temp)
 
             elif root_bridge_id_packet == root_bridge_id:
                 if root_port == -1:
@@ -229,7 +232,7 @@ def main():
         if check_if_unicast(dest_mac_numerical):
             if dest_mac in MAC_Table:
                 # Check if packet should have 802.1Q header (it is sent to a trunk port)
-                if MAC_Table[dest_mac] in trunk_ports:
+                if MAC_Table[dest_mac] in trunk_ports and trunk_ports[MAC_Table[dest_mac]] == "D":
                     
                     # Check if the packet arrived from an access port (should add 802.1Q header)
                     if get_interface_name(interface) in access_ports:
@@ -240,7 +243,7 @@ def main():
                     # Else the header is already there, just forward the packet
                     else:
                         send_to_link(get_interface_value(MAC_Table[dest_mac]), length, data)
-                else:
+                elif MAC_Table[dest_mac] in access_ports:
                     # If the packet is sent to an access port, and the sender is an access port
                     # check if they are in the same VLAN
                     if get_interface_name(interface) in access_ports:
@@ -261,7 +264,7 @@ def main():
                     if curr_interface != interface:
                         curr_interface_name = get_interface_name(curr_interface)
                         # Check if packet should have 802.1Q header (it is sent to a trunk port)
-                        if curr_interface_name in trunk_ports:
+                        if curr_interface_name in trunk_ports and trunk_ports[curr_interface_name] == "D":
                             
                             # Check if the packet arrived from an access port (should add 802.1Q header)
                             if get_interface_name(interface) in access_ports:
@@ -272,7 +275,7 @@ def main():
                             # Else the header is already there, just forward the packet
                             else:
                                 send_to_link(curr_interface, length, data)
-                        else:
+                        elif curr_interface_name in access_ports:
                             # If the packet is sent to an access port, and the sender is an access port
                             # check if they are in the same VLAN
                             if get_interface_name(interface) in access_ports:
@@ -293,7 +296,7 @@ def main():
                 if curr_interface != interface:
                     curr_interface_name = get_interface_name(curr_interface)
                     # Check if packet should have 802.1Q header (it is sent to a trunk port)
-                    if curr_interface_name in trunk_ports:
+                    if curr_interface_name in trunk_ports and trunk_ports[curr_interface_name] == "D":
                         
                         # Check if the packet arrived from an access port (should add 802.1Q header)
                         if get_interface_name(interface) in access_ports:
@@ -304,7 +307,7 @@ def main():
                         # Else the header is already there, just forward the packet
                         else:
                             send_to_link(curr_interface, length, data)
-                    else:
+                    elif curr_interface_name in access_ports:
                         # If the packet is sent to an access port, and the sender is an access port
                         # check if they are in the same VLAN
                         if get_interface_name(interface) in access_ports:
