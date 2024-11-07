@@ -1,8 +1,8 @@
-# Tema 1 - Implementare Switch
+# Switch Implementation
 
-## Copyright 2024 Zaharia Nicusor-Alexandru 335CA
+## Copyright 2024 Zaharia Nicusor-Alexandru
 
-### Solved tasks - 1 2 3
+### Tasks - Forwarding, VLAN, STP
 
 ### Project Idea
 
@@ -12,7 +12,6 @@ The main code is written in `switch.py`.
 ### Structure
 
 - `switch.py` - the main area where the implementation can be found
-- `wrapper.py` - helper functions
 - `README.md` - contains the implementation description
 
 ### Tasks descriptions and Workflow
@@ -52,10 +51,3 @@ A function to create a minimal BPDU header was also created.
 Those headers are identified by the multicast MAC destination address `01:80:C2:00:00:00`.
 BPDU frames are treated separately before the forwarding process.
 After solving some broadcast storm problems (thanks to the questions already addressed on the homework's forum) and with some minor interventions to the forwarding process, STP was solved.
-
-### Feedback
-
-- Interesting homework with challenging tasks
-- Learned more about switches
-- Took a little bit more than expected
-- Given that `send_to_link(interface, length, eth_frame)` works with interface values and not interface names, it would've been helpful if in the config files the interfaces were also represented as values (altough I would keep somewhere, like in the homework description, the names used for interfaces because it is easier to understand with names than it is with simple numerical values).
